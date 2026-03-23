@@ -1,0 +1,8 @@
+INFO:     Started server process [69213]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+ERROR:    [Errno 48] error while attempting to bind on address ('0.0.0.0', 8002): address already in use
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+🚀 Starting Job Market MCP Server on port 8002...
+   Tavily API configured: True

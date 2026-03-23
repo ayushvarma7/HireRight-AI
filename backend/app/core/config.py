@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     
     # Google Gemini
     google_api_key: str = ""
-    gemini_model: str = "gemini-1.5-flash"
+    gemini_model: str = "gemini-2.0-flash"
     gemini_embedding_model: str = "models/embedding-001"
     embedding_dimension: int = 768
     

@@ -6,7 +6,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 # Initialize Gemini LLM
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 llm = ChatGoogleGenerativeAI(
-    model="gemini-1.5-flash",
+    model="gemini-2.0-flash",
     google_api_key=GOOGLE_API_KEY,
     temperature=0.7,
 ) if GOOGLE_API_KEY else None

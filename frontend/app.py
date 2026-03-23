@@ -292,7 +292,7 @@ def main():
         show_dashboard()
     elif page == "🔍 Job Match":
         show_job_match()
-    elif page == "🤖 Agent Debate":
+    elif page == "🤖 AI Debate":
         show_agent_debate()
     elif page == "✉️ Cover Letter":
         show_cover_letter()
@@ -448,10 +448,15 @@ def show_job_match():
         st.markdown("</div>", unsafe_allow_html=True)
     
     st.divider()
-    
+
+    refresh_live = st.checkbox(
+        "🔄 Refresh Live Source — fetch new jobs from the web (slower, uses API credits)",
+        value=False,
+    )
+
     if st.button("🚀 Start Matching", use_container_width=True):
         st.info("📡 Sending request to backend...")
-        
+
         if not search_query and not st.session_state.get("resume_uploaded"):
             st.warning("Please upload a resume or enter a search query!")
             return
@@ -479,7 +484,8 @@ def show_job_match():
                     "query": search_query,
                     "location": location,
                     "level": experience_level,
-                    "github_username": github_username
+                    "github_username": github_username,
+                    "refresh": "1" if refresh_live else "0",
                 }
                 
                 # If resume uploaded, send it
@@ -522,9 +528,15 @@ def show_job_match():
                             st.session_state["matched_jobs"] = matches
                             st.session_state["has_matches"] = True
                             st.success(f"✅ Found {len(matches)} matches! ({proc_time}s)")
-                            
+
                             if parsed_skills:
                                 st.session_state["resume_skills"] = parsed_skills
+                            # Store resume summary for cover letter generation
+                            if search_query:
+                                st.session_state["resume_summary"] = (
+                                    f"Candidate targeting {search_query} roles. "
+                                    f"Skills: {', '.join(parsed_skills[:15])}."
+                                ) if parsed_skills else search_query
                             
                             st.rerun()
                         else:
@@ -565,37 +577,56 @@ def show_job_match():
     
     # Show matched jobs
     if st.session_state.get("has_matches") and st.session_state.get("matched_jobs"):
-        st.markdown(f'<h3 style="margin-top: 2rem; color: #10b981;">🎯 {len(st.session_state["matched_jobs"])} Highly Compatible Roles Discovered</h3>', unsafe_allow_html=True)
-        
-        for job in st.session_state["matched_jobs"]:
+        import re as _re
+        _agg_pat = _re.compile(r'search results|best jobs|\d[\d,]*\+?\s+jobs?\s+in', _re.IGNORECASE)
+        clean_matches = [
+            j for j in st.session_state["matched_jobs"]
+            if j.get("title") and not _agg_pat.search(j["title"]) and len(j["title"].split()) <= 15
+        ]
+        st.markdown(f'<h3 style="margin-top: 2rem; color: #10b981;">🎯 {len(clean_matches)} Highly Compatible Roles Discovered</h3>', unsafe_allow_html=True)
+
+        for job in clean_matches:
             score = job.get("match_score", 0) * 100 if job.get("match_score", 0) < 1 else job.get("match_score", 0)
             score_color = "#10b981" if score >= 80 else "#f59e0b" if score >= 60 else "#ef4444"
-            
+            level = (job.get('experience_level') or "Mid").title()
             job_url = job.get('url', '')
-            title_display = f"<a href='{job_url}' target='_blank' style='color: #f1f5f9; text-decoration: none;'>{job['title']}</a>" if job_url else job['title']
-            
-            salary_badge = f"""<span style="display: inline-block; background: rgba(139, 92, 246, 0.1); color: #8b5cf6; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.75rem; font-weight: 500; margin: 0.5rem 0.5rem 0 0;">💵 Up to ${job.get('salary_max'):,}</span>""" if job.get('salary_max') else ""
-            remote_badge = f"""<span style="display: inline-block; background: rgba(16, 185, 129, 0.1); color: #10b981; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.75rem; font-weight: 500; margin: 0.5rem 0.5rem 0 0;">🌍 {job.get('remote_type', '').title()}</span>""" if job.get('remote_type') else ""
-            level = job.get('experience_level') or "Mid"
-            level_badge = f"""<span style="display: inline-block; background: rgba(245, 158, 11, 0.1); color: #f59e0b; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.75rem; font-weight: 500; margin: 0.5rem 0.5rem 0 0;">📈 {level.title()} Level</span>"""
-            
-            st.markdown(f"""
-            <div style="background: rgba(255, 255, 255, 0.03); border-left: 4px solid {score_color}; border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;">
-                <div>
-                    <h3 style="margin: 0 0 0.5rem 0; font-size: 1.4rem;">{title_display}</h3>
-                    <p style="margin: 0; color: #94a3b8; font-size: 1rem;">🏢 <strong style="color: #f1f5f9;">{job['company']}</strong> | 📍 {job.get('location', 'Unspecified')} | 🌐 {job.get('source', 'Market')}</p>
-                    <div style="display: flex; flex-wrap: wrap;">
-                        {salary_badge}
-                        {remote_badge}
-                        {level_badge}
-                    </div>
-                </div>
-                <div style="text-align: right;">
-                    <h2 style="margin: 0; color: {score_color}; font-size: 2.2rem;">{int(score)}%</h2>
-                    <p style="margin: 0; color: #94a3b8; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px;">Match</p>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+
+            with st.container():
+                st.markdown(
+                    f'<div style="border-left: 4px solid {score_color}; border-radius: 8px; '
+                    f'background: rgba(255,255,255,0.03); padding: 1rem 1.2rem; margin-bottom: 0.5rem;">',
+                    unsafe_allow_html=True,
+                )
+                left_col, score_col = st.columns([4, 1])
+                with left_col:
+                    if job_url:
+                        st.markdown(f"### [{job['title']}]({job_url})")
+                    else:
+                        st.markdown(f"### {job['title']}")
+                    st.caption(
+                        f"🏢 **{job['company']}** &nbsp;|&nbsp; "
+                        f"📍 {job.get('location', 'Unspecified')} &nbsp;|&nbsp; "
+                        f"🌐 {job.get('source', 'Market')}"
+                    )
+                    tags = []
+                    if job.get('salary_max'):
+                        tags.append(f"💵 Up to ${job['salary_max']:,}")
+                    if job.get('remote_type'):
+                        tags.append(f"🌍 {job['remote_type'].title()}")
+                    tags.append(f"📈 {level} Level")
+                    if job.get('job_type'):
+                        tags.append(f"📅 {job['job_type'].title()}")
+                    st.markdown(" &nbsp; ".join(f"`{t}`" for t in tags))
+                with score_col:
+                    st.markdown(
+                        f'<div style="text-align:center; padding-top: 0.5rem;">'
+                        f'<span style="font-size:2rem; font-weight:700; color:{score_color};">{int(score)}%</span>'
+                        f'<br><span style="font-size:0.75rem; color:#94a3b8; text-transform:uppercase; letter-spacing:1px;">Match</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                st.markdown('</div>', unsafe_allow_html=True)
+                st.divider()
 
 
 def run_langgraph_debate(job, resume_text, resume_skills, github_username):
@@ -634,7 +665,7 @@ def show_agent_debate():
                 padding: 24px; border-radius: 16px; margin-bottom: 24px; color: white;">
         <h3 style="color: #e94560; margin-top: 0;">🎯 What is the Agent Debate?</h3>
         <p style="font-size: 1.05em; line-height: 1.6; color: #e0e0e0;">
-            Instead of giving you a <b>simple match score</b>, HireRight uses <b>3 AI agents powered by GPT-4</b> 
+            Instead of giving you a <b>simple match score</b>, HireRight uses <b>3 AI agents powered by Gemini AI</b>
             that <em>debate</em> whether you're a good fit for a job — just like a real hiring committee. 
             Each agent has a unique perspective, creating a <b>balanced, multi-dimensional analysis</b> of your candidacy.
         </p>
@@ -733,7 +764,7 @@ def show_agent_debate():
     col1, col2 = st.columns([1, 2])
     with col1:
         if st.button("🚀 Run AI Debate", type="primary", use_container_width=True):
-            with st.spinner("🤖 Agents are debating your candidacy... (This uses real GPT-4 calls)"):
+            with st.spinner("🤖 Agents are debating your candidacy... (Powered by Gemini AI)"):
                 result = run_langgraph_debate(
                     selected_job, 
                     resume_summary, 
@@ -840,7 +871,7 @@ def show_agent_debate():
         total_rounds = result.get("total_rounds", 0)
         if proc_time > 0:
             st.divider()
-            st.caption(f"⏱️ Debate completed in {proc_time:.1f}s across {total_rounds} round(s) using GPT-4 agents.")
+            st.caption(f"⏱️ Debate completed in {proc_time:.1f}s across {total_rounds} round(s) using Gemini AI agents.")
                 
     else:
         st.markdown("""
@@ -884,62 +915,39 @@ def show_cover_letter():
     st.markdown("</div>", unsafe_allow_html=True)
     
     if st.button("🚀 Synthesize Cover Letter", use_container_width=True):
-        with st.spinner("Generating with AI..."):
+        with st.spinner("Generating with Gemini AI..."):
             try:
-                # Get the selected job details
                 selected_idx = job_options.index(selected)
                 job = st.session_state["matched_jobs"][selected_idx]
-                
-                # Resume text from session if available
-                resume_summary = st.session_state.get("resume_summary", "a software professional with relevant experience")
-                
-                # Call OpenAI for cover letter
-                import openai
-                client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-                
-                prompt = f"""Write a {tone.lower()} cover letter for the following job:
+                resume_summary = st.session_state.get("resume_summary", "Experienced software professional with relevant background.")
 
-Job Title: {job['title']}
-Company: {job['company']}
-Job Description: {job.get('description', 'Not provided')[:500]}
-
-Candidate Profile: {resume_summary}
-
-Focus areas: {', '.join(focus)}
-
-Write a compelling cover letter (3-4 paragraphs) that:
-1. Opens with an engaging hook
-2. Connects the candidate's skills to the job requirements
-3. Shows enthusiasm for the company
-4. Ends with a strong call to action
-"""
-                
-                response = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.7,
-                    max_tokens=800
+                payload = {
+                    "job_title": job["title"],
+                    "job_company": job["company"],
+                    "job_description": job.get("description", ""),
+                    "candidate_profile": resume_summary,
+                    "tone": tone.lower(),
+                    "focus_areas": focus,
+                }
+                response = requests.post(
+                    f"{BACKEND_URL}/api/v1/cover-letter/quick",
+                    json=payload,
+                    timeout=60,
                 )
-                
-                cover_letter = response.choices[0].message.content
-                
-                st.text_area(
-                    "Your Cover Letter",
-                    value=cover_letter,
-                    height=400
-                )
-                
-                # Copy button
-                st.download_button(
-                    "📋 Download as .txt",
-                    cover_letter,
-                    file_name=f"cover_letter_{job['company'].replace(' ', '_')}.txt",
-                    mime="text/plain"
-                )
-                
+                if response.status_code == 200:
+                    cover_letter = response.json().get("cover_letter", "")
+                    st.text_area("Your Cover Letter", value=cover_letter, height=400)
+                    st.download_button(
+                        "📋 Download as .txt",
+                        cover_letter,
+                        file_name=f"cover_letter_{job['company'].replace(' ', '_')}.txt",
+                        mime="text/plain",
+                    )
+                else:
+                    err = response.json().get("detail", response.text[:200])
+                    st.error(f"Generation failed: {err}")
             except Exception as e:
-                st.error(f"Generation failed: {str(e)}")
-                st.warning("Make sure OPENAI_API_KEY is set in your environment.")
+                st.error(f"Generation failed: {type(e).__name__}: {e}")
 
 
 def show_skill_roadmap():

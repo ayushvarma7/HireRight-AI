@@ -1,0 +1,189 @@
+INFO:     Will watch for changes in these directories: ['/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/backend']
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [69218] using WatchFiles
+INFO:     Started server process [69222]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+DEBUG [match.py]: GitHub MCP URL = http://localhost:8001
+DEBUG [match.py]: Job Market MCP URL = http://localhost:8002
+DEBUG: CORS origins configured → ['http://localhost:3000', 'http://127.0.0.1:8501', 'http://localhost:8501']
+
+============================================================
+🚀 HireRight Backend Starting Up
+============================================================
+  GOOGLE_API_KEY  Loaded: True
+  SUPABASE_URL    Loaded: False
+  SUPABASE_KEY    Loaded: False
+  GITHUB_TOKEN    Loaded: False
+  TAVILY_API_KEY  Loaded: False
+  CORS Origins:   ['http://localhost:8501', 'http://localhost:3000']
+  Gemini Model:   gemini-1.5-flash
+  Embedding Dim:  768
+============================================================
+  ⚠️  WARNING: Missing critical env vars: SUPABASE_URL, SUPABASE_KEY
+  ⚠️  The /match endpoint WILL FAIL without these!
+============================================================
+
+HTTP Request: GET https://tbxfmhntryqwuxxvueom.supabase.co/rest/v1/jobs?select=%2A&is_active=eq.True&order=scraped_at.desc&limit=20 "HTTP/2 200 OK"
+INFO:     127.0.0.1:55777 - "GET /api/v1/jobs?limit=20 HTTP/1.1" 200 OK
+HTTP Request: GET https://tbxfmhntryqwuxxvueom.supabase.co/rest/v1/jobs?select=%2A&is_active=eq.True&order=scraped_at.desc&limit=20 "HTTP/2 200 OK"
+INFO:     127.0.0.1:55781 - "GET /api/v1/jobs?limit=20 HTTP/1.1" 200 OK
+HTTP Request: GET https://tbxfmhntryqwuxxvueom.supabase.co/rest/v1/jobs?select=%2A&is_active=eq.True&order=scraped_at.desc&limit=20 "HTTP/2 200 OK"
+INFO:     127.0.0.1:55784 - "GET /api/v1/jobs?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55787 - "GET / HTTP/1.1" 200 OK
+
+════════════════════════════════════════════════════════════
+DEBUG: Match request received by backend
+DEBUG: Timestamp: 2026-03-22 20:22:53
+DEBUG: query=None, location=None, level='Senior'
+DEBUG: github_username=None
+DEBUG: resume=YES (resume.pdf)
+════════════════════════════════════════════════════════════
+
+--- Step 1: Processing input data ---
+  - Parsing resume: resume.pdf
+  - Resume bytes read: 115709
+📄 Attempting PDF extraction (115709 bytes)
+✅ pypdf extracted 1 pages
+📄 Total extracted text: 4864 chars
+  ✅ Resume parsed: 17 skills found: ['Python', 'JavaScript', 'TypeScript', 'Java', 'C++', 'Go', 'React', 'Node.js', 'FastAPI', 'Spring']
+  ⏱  Step 1 took 0.03s
+
+--- Step 2: Fetching external context ---
+  - No GitHub username provided, skipping
+  ⏱  Step 2 took 0.00s
+
+--- Step 3: Building search context ---
+  - Search context length: 273 chars
+  ⏱  Step 3 took 0.00s
+
+--- Step 4: Recording request in Supabase documents table ---
+HTTP Request: POST https://tbxfmhntryqwuxxvueom.supabase.co/rest/v1/documents "HTTP/2 201 Created"
+  ✅ Match request saved to Supabase (201 Created)
+  ⏱  Step 4 took 0.15s
+
+--- Step 5: Executing semantic search in Supabase ---
+DEBUG: Generating embedding for text (length: 273)...
+HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents "HTTP/1.1 403 Forbidden"
+DEBUG: Generating embedding for text (length: 273)...
+HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents "HTTP/1.1 403 Forbidden"
+DEBUG: Generating embedding for text (length: 273)...
+HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents "HTTP/1.1 403 Forbidden"
+DEBUG: Generating embedding for text (length: 273)...
+HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents "HTTP/1.1 403 Forbidden"
+DEBUG: Generating embedding for text (length: 273)...
+HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents "HTTP/1.1 403 Forbidden"
+Traceback (most recent call last):
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/venv/lib/python3.14/site-packages/langchain_google_genai/embeddings.py", line 598, in aembed_query
+    result = await self.client.aio.models.embed_content(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/venv/lib/python3.14/site-packages/google/genai/models.py", line 8214, in embed_content
+    return await self._embed_content(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+        model=model, contents=contents, config=config
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/venv/lib/python3.14/site-packages/google/genai/models.py", line 6534, in _embed_content
+    response = await self._api_client.async_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        'post', path, request_dict, http_options
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/venv/lib/python3.14/site-packages/google/genai/_api_client.py", line 1447, in async_request
+    result = await self._async_request(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+        http_request=http_request, http_options=http_options, stream=False
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/venv/lib/python3.14/site-packages/google/genai/_api_client.py", line 1380, in _async_request
+    return await self._async_retry(  # type: ignore[no-any-return]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        self._async_request_once, http_request, stream
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/venv/lib/python3.14/site-packages/tenacity/asyncio/__init__.py", line 112, in __call__
+    do = await self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/venv/lib/python3.14/site-packages/tenacity/asyncio/__init__.py", line 157, in iter
+    result = await action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/venv/lib/python3.14/site-packages/tenacity/_utils.py", line 111, in inner
+    return call(*args, **kwargs)
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/venv/lib/python3.14/site-packages/tenacity/__init__.py", line 413, in exc_check
+    raise retry_exc.reraise()
+          ~~~~~~~~~~~~~~~~~^^
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/venv/lib/python3.14/site-packages/tenacity/__init__.py", line 184, in reraise
+    raise self.last_attempt.result()
+          ~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/concurrent/futures/_base.py", line 443, in result
+    return self.__get_result()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/concurrent/futures/_base.py", line 395, in __get_result
+    raise self._exception
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/venv/lib/python3.14/site-packages/tenacity/asyncio/__init__.py", line 116, in __call__
+    result = await fn(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/venv/lib/python3.14/site-packages/google/genai/_api_client.py", line 1360, in _async_request_once
+    await errors.APIError.raise_for_async_response(client_response)
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/venv/lib/python3.14/site-packages/google/genai/errors.py", line 216, in raise_for_async_response
+    await cls.raise_error_async(status_code, response_json, response)
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/venv/lib/python3.14/site-packages/google/genai/errors.py", line 238, in raise_error_async
+    raise ClientError(status_code, response_json, response)
+google.genai.errors.ClientError: 403 PERMISSION_DENIED. {'error': {'code': 403, 'message': 'Generative Language API has not been used in project 523210812930 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/generativelanguage.googleapis.com/overview?project=523210812930 then retry. If you enabled this API recently, wait a few minutes for the action to propagate to our systems and retry.', 'status': 'PERMISSION_DENIED', 'details': [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'SERVICE_DISABLED', 'domain': 'googleapis.com', 'metadata': {'serviceTitle': 'Generative Language API', 'service': 'generativelanguage.googleapis.com', 'activationUrl': 'https://console.developers.google.com/apis/api/generativelanguage.googleapis.com/overview?project=523210812930', 'consumer': 'projects/523210812930', 'containerInfo': '523210812930'}}, {'@type': 'type.googleapis.com/google.rpc.LocalizedMessage', 'locale': 'en-US', 'message': 'Generative Language API has not been used in project 523210812930 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/generativelanguage.googleapis.com/overview?project=523210812930 then retry. If you enabled this API recently, wait a few minutes for the action to propagate to our systems and retry.'}, {'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Google developers console API activation', 'url': 'https://console.developers.google.com/apis/api/generativelanguage.googleapis.com/overview?project=523210812930'}]}]}}
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/venv/lib/python3.14/site-packages/tenacity/asyncio/__init__.py", line 116, in __call__
+    result = await fn(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/backend/app/services/embedding.py", line 37, in get_embedding
+    embedding = await client.aembed_query(text)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/venv/lib/python3.14/site-packages/langchain_google_genai/embeddings.py", line 605, in aembed_query
+    raise GoogleGenerativeAIError(msg) from e
+langchain_google_genai._common.GoogleGenerativeAIError: Error embedding content (PERMISSION_DENIED): 403 PERMISSION_DENIED. {'error': {'code': 403, 'message': 'Generative Language API has not been used in project 523210812930 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/generativelanguage.googleapis.com/overview?project=523210812930 then retry. If you enabled this API recently, wait a few minutes for the action to propagate to our systems and retry.', 'status': 'PERMISSION_DENIED', 'details': [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'SERVICE_DISABLED', 'domain': 'googleapis.com', 'metadata': {'serviceTitle': 'Generative Language API', 'service': 'generativelanguage.googleapis.com', 'activationUrl': 'https://console.developers.google.com/apis/api/generativelanguage.googleapis.com/overview?project=523210812930', 'consumer': 'projects/523210812930', 'containerInfo': '523210812930'}}, {'@type': 'type.googleapis.com/google.rpc.LocalizedMessage', 'locale': 'en-US', 'message': 'Generative Language API has not been used in project 523210812930 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/generativelanguage.googleapis.com/overview?project=523210812930 then retry. If you enabled this API recently, wait a few minutes for the action to propagate to our systems and retry.'}, {'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Google developers console API activation', 'url': 'https://console.developers.google.com/apis/api/generativelanguage.googleapis.com/overview?project=523210812930'}]}]}}
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/backend/app/api/routes/match.py", line 335, in match_jobs
+    search_results = await vector_service.search_jobs(
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+    )
+    ^
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/backend/app/services/supabase_vector_service.py", line 81, in search_jobs
+    query_embedding = await get_embedding(query)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/venv/lib/python3.14/site-packages/tenacity/asyncio/__init__.py", line 193, in async_wrapped
+    return await copy(fn, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/venv/lib/python3.14/site-packages/tenacity/asyncio/__init__.py", line 112, in __call__
+    do = await self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/venv/lib/python3.14/site-packages/tenacity/asyncio/__init__.py", line 157, in iter
+    result = await action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/venv/lib/python3.14/site-packages/tenacity/_utils.py", line 111, in inner
+    return call(*args, **kwargs)
+  File "/Users/ayush/Downloads/Fall2025/Personal/HireRight-AI/venv/lib/python3.14/site-packages/tenacity/__init__.py", line 414, in exc_check
+    raise retry_exc from fut.exception()
+tenacity.RetryError: RetryError[<Future at 0x10f205c50 state=finished raised GoogleGenerativeAIError>]
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+❌ CRITICAL ERROR in match_jobs after 17.15s
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+Error Type: RetryError
+Error Message: RetryError[<Future at 0x10f205c50 state=finished raised GoogleGenerativeAIError>]
+Full Traceback:
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+INFO:     127.0.0.1:55789 - "POST /api/v1/match HTTP/1.1" 500 Internal Server Error

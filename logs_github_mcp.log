@@ -1,7 +1,4 @@
-INFO:     Started server process [42856]
+INFO:     Started server process [60735]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
-ERROR:    [Errno 48] error while attempting to bind on address ('0.0.0.0', 8001): address already in use
-INFO:     Waiting for application shutdown.
-INFO:     Application shutdown complete.
-🚀 Starting GitHub Context MCP Server on port 8001...
+INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)

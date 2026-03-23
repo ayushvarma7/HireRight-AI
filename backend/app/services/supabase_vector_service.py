@@ -83,7 +83,7 @@ class SupabaseVectorService:
         # Call match_jobs RPC
         rpc_params = {
             "query_embedding": query_embedding,
-            "match_threshold": 0.5,
+            "match_threshold": 0.7,
             "match_count": top_k,
         }
         

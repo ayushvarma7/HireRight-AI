@@ -4,8 +4,10 @@ Match Route
 Trigger the agent pipeline for job-resume matching.
 """
 
+import re
 import time
 import traceback
+from datetime import datetime, timezone
 from typing import List, Optional
 import json
 import os
@@ -26,7 +28,9 @@ from app.core.config import settings
 
 # GitHub MCP Server URL — use localhost for local dev, Docker hostname for containers
 GITHUB_MCP_URL = os.getenv("MCP_GITHUB_SERVER_URL", "http://localhost:8001")
+JOB_MARKET_MCP_URL = os.getenv("MCP_JOBMARKET_SERVER_URL", "http://localhost:8002")
 print(f"DEBUG [match.py]: GitHub MCP URL = {GITHUB_MCP_URL}")
+print(f"DEBUG [match.py]: Job Market MCP URL = {JOB_MARKET_MCP_URL}")
 
 router = APIRouter()
 
@@ -34,7 +38,7 @@ router = APIRouter()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 llm = ChatGoogleGenerativeAI(
-    model="gemini-1.5-flash",
+    model="gemini-2.0-flash",
     google_api_key=GOOGLE_API_KEY,
     temperature=0,
 ) if GOOGLE_API_KEY else None
@@ -48,6 +52,132 @@ async def get_embedding(text: str) -> List[float]:
     except Exception as e:
         print(f"Error getting embedding: {e}")
         return [0.0] * 768
+
+
+def _extract_source(url: str) -> str:
+    """Extract source name from URL."""
+    if "linkedin" in url:
+        return "LinkedIn"
+    elif "indeed" in url:
+        return "Indeed"
+    elif "glassdoor" in url:
+        return "Glassdoor"
+    return "Web"
+
+
+def _parse_raw_jobs(tavily_results: list) -> list:
+    """Minimal parser for raw Tavily job results → structured dicts."""
+    jobs = []
+    seen_urls = set()
+    agg_pattern = re.compile(
+        r'search results|best jobs|\d[\d,]*\+?\s+jobs?\s+in', re.IGNORECASE
+    )
+    for result in tavily_results:
+        url = result.get("url", "")
+        title = result.get("title", "")
+        snippet = result.get("snippet", result.get("content", ""))
+        if url in seen_urls or not url:
+            continue
+        seen_urls.add(url)
+        # Skip aggregated pages
+        if agg_pattern.search(title) or len(title.split()) > 15:
+            continue
+        # Parse company from title
+        company = "Unknown"
+        clean_title = title
+        if " - " in title:
+            parts = title.split(" - ")
+            clean_title = parts[0].strip()
+            company = parts[1].split("|")[0].strip()
+        elif " at " in title.lower():
+            parts = re.split(r"\bat\b", title, maxsplit=1, flags=re.IGNORECASE)
+            clean_title = parts[0].strip()
+            company = parts[1].split("|")[0].strip() if len(parts) > 1 else "Unknown"
+        elif " | " in title:
+            parts = title.split(" | ")
+            clean_title = parts[0].strip()
+            if len(parts) > 1 and "LinkedIn" not in parts[1] and "Indeed" not in parts[1]:
+                company = parts[1].strip()
+        for suffix in ["| LinkedIn", "| Indeed", "- LinkedIn", "- Indeed"]:
+            company = company.replace(suffix, "").strip()
+            clean_title = clean_title.replace(suffix, "").strip()
+        if len(clean_title) < 5 or not company or company == "Unknown":
+            continue
+        full_text = (clean_title + " " + snippet).lower()
+        remote_type = "remote" if "remote" in full_text else "hybrid" if "hybrid" in full_text else "on-site"
+        jobs.append({
+            "title": clean_title,
+            "company": company,
+            "description": snippet[:2000] if snippet else f"Position at {company}.",
+            "source_url": url,
+            "source_platform": _extract_source(url),
+            "remote_type": remote_type,
+            "job_type": "full-time",
+            "experience_level": "mid",
+            "salary_min": None,
+            "salary_max": None,
+            "location": remote_type.title(),
+        })
+    return jobs
+
+
+async def _scrape_and_store_jobs(query: str, vector_service) -> int:
+    """
+    Fetch jobs from Job Market MCP, embed, and store in Supabase.
+    Returns number of new jobs stored.
+    """
+    stored = 0
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{JOB_MARKET_MCP_URL}/tools/search_jobs",
+                json={"query": query, "limit": 3},
+            )
+            if resp.status_code != 200:
+                print(f"  ⚠️ Job Market MCP returned {resp.status_code}")
+                return 0
+            raw_jobs = resp.json().get("jobs", [])
+
+        parsed = _parse_raw_jobs(raw_jobs)
+        supabase = vector_service.supabase
+
+        for job in parsed:
+            # Dedup check
+            existing = supabase.table("jobs").select("id").eq("source_url", job["source_url"]).execute()
+            if existing.data:
+                continue
+            embed_text = f"{job['title']} at {job['company']}. {job['description']}"
+            try:
+                embedding = await get_gemini_embedding(embed_text[:8000])
+            except Exception as e:
+                print(f"  ⚠️ Embedding failed for '{job['title']}': {e}")
+                continue
+            row = {
+                "id": str(uuid.uuid4()),
+                "title": job["title"],
+                "company": job["company"],
+                "description": job["description"],
+                "url": job["source_url"],
+                "source_url": job["source_url"],
+                "source_platform": job["source_platform"],
+                "remote_type": job["remote_type"],
+                "job_type": job["job_type"],
+                "experience_level": job["experience_level"],
+                "salary_min": job["salary_min"],
+                "salary_max": job["salary_max"],
+                "location": job["location"],
+                "embedding": embedding,
+                "is_active": True,
+                "scraped_at": datetime.now(timezone.utc).isoformat(),
+            }
+            try:
+                supabase.table("jobs").insert(row).execute()
+                stored += 1
+            except Exception as e:
+                print(f"  ⚠️ Insert failed for '{job['title']}': {e}")
+    except Exception as e:
+        print(f"  ⚠️ _scrape_and_store_jobs failed: {e}")
+    return stored
 
 
 def extract_skills_with_llm(text: str, max_skills: int = 10) -> List[str]:
@@ -77,6 +207,7 @@ async def match_jobs(
     location: Optional[str] = Form(None),
     level: Optional[str] = Form(None),
     github_username: Optional[str] = Form(None),
+    refresh: Optional[str] = Form("0"),
     resume: Optional[UploadFile] = File(None),
 ):
     """
@@ -207,7 +338,29 @@ async def match_jobs(
         )
         print(f"  ✅ Supabase returned {len(search_results)} results")
         print(f"  ⏱  Step 5 took {time.time() - step_start:.2f}s")
-        
+
+        # 5b. Conditional scraping: fetch live jobs if DB cache is thin or refresh requested
+        step_start = time.time()
+        refresh_bool = str(refresh).strip() in ("1", "true", "True")
+        high_quality = [r for r in search_results if r.get("score", 0) > 0.8]
+        print(f"\n--- Step 5b: Cache check — {len(high_quality)} high-quality results (score>0.8) ---")
+        if len(high_quality) < 3 or refresh_bool:
+            scrape_query = query or (", ".join(skills[:5]) if skills else "software engineer")
+            print(f"  ℹ️  Triggering live scrape for: '{scrape_query}' (refresh={refresh_bool})")
+            new_count = await _scrape_and_store_jobs(scrape_query, vector_service)
+            if new_count > 0:
+                print(f"  ✅ Stored {new_count} new jobs — re-running vector search")
+                search_results = await vector_service.search_jobs(
+                    query=search_context,
+                    top_k=10,
+                )
+                print(f"  ✅ Updated search returned {len(search_results)} results")
+            else:
+                print("  ℹ️  No new jobs scraped (MCP unavailable or all duplicates)")
+        else:
+            print(f"  ✅ Cache sufficient — skipping live scrape")
+        print(f"  ⏱  Step 5b took {time.time() - step_start:.2f}s")
+
         # 6. Analyze results with LLM
         step_start = time.time()
         print(f"\n--- Step 6: Processing {len(search_results)} search results ---")

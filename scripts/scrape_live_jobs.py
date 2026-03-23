@@ -57,10 +57,26 @@ DEFAULT_QUERIES = [
 ]
 
 
+_AGGREGATED_TITLE_PATTERNS = re.compile(
+    r'search results|best jobs|\d[\d,]*\+?\s+jobs?\s+in|^\d[\d,]*\+?\s+',
+    re.IGNORECASE,
+)
+
+
+def _is_aggregated_title(title: str) -> bool:
+    """Return True if the title looks like a listing page, not a single job."""
+    if _AGGREGATED_TITLE_PATTERNS.search(title):
+        return True
+    # More than 15 words → almost certainly a search result page headline
+    if len(title.split()) > 15:
+        return True
+    return False
+
+
 def parse_job_listings_from_snippets(tavily_results: list[dict]) -> list[dict]:
     """
     Parse individual job listings from Tavily search results.
-    
+
     Tavily returns web search results — each result might contain
     text from LinkedIn/Indeed with multiple job mentions.
     We extract structured job data from the raw snippets.
@@ -78,6 +94,10 @@ def parse_job_listings_from_snippets(tavily_results: list[dict]) -> list[dict]:
         if url in seen_urls:
             continue
         seen_urls.add(url)
+
+        # Skip aggregated listing pages immediately (before any parsing)
+        if _is_aggregated_title(title):
+            continue
 
         # Try to extract company from the title
         # Common patterns: "Job Title - Company | LinkedIn"
@@ -135,6 +155,10 @@ def parse_job_listings_from_snippets(tavily_results: list[dict]) -> list[dict]:
 
         # Skip if title is too generic or clearly not a job
         if len(clean_title) < 5 or clean_title.lower() in ["jobs", "careers", "home"]:
+            continue
+
+        # Reject entries where company could not be identified
+        if not company or company == "Unknown":
             continue
 
         description = snippet[:2000] if snippet else f"Position at {company}. Found via {source}."
@@ -338,6 +362,7 @@ async def scrape_and_store(queries: list[str], limit_per_query: int = 10):
             "title": title,
             "company": company,
             "description": job["description"],
+            "url": job["source_url"],
             "source_url": job["source_url"],
             "source_platform": job["source_platform"],
             "remote_type": job["remote_type"],
@@ -386,8 +411,8 @@ def main():
     parser.add_argument(
         "--limit",
         type=int,
-        default=10,
-        help="Max results per query (default: 10)",
+        default=3,
+        help="Max results per query (default: 3)",
     )
     args = parser.parse_args()
 

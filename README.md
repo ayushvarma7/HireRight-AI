@@ -1,173 +1,406 @@
 # HireRight AI
 
-**HireRight AI** flips the traditional applicant tracking system (ATS) on its head. Instead of blindly matching keywords, HireRight leverages **Google Gemini Vector Embeddings** to semantically understand a candidate's resume, and utilizes an autonomous **LangGraph multi-agent committee** to debate the candidate's fit for a role in real-time. Built for engineers and tech recruiters alike, this system showcases modern backend engineering, Agentic AI, vector databases (`pgvector`), and the emerging **Model Context Protocol (MCP)** for live web scraping.
+> **AI-native career intelligence platform** — semantic resume matching, multi-agent hiring committee debate, and live job market ingestion.
 
-```text
-┌─────────────────────────────────────────────────────────────────┐
-│                        HIRE RIGHT AI                            │
-│  ┌─────────────┐   ┌────────────────┐   ┌────────────────────┐  │
-│  │   UI (Web)  │   │   LangGraph    │   │ Supabase Vector DB │  │
-│  │ (Streamlit) │◄──┤(Hiring Agents) │◄──┤  (pgvector + SQL)  │  │
-│  └─────────────┘   └───────┬────────┘   └─────────┬──────────┘  │
-└────────────────────────────┼──────────────────────┼─────────────┘
-                             │                      │
-                             ▼                      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│               EXTERNAL INTEGRATIONS (MCP SERVERS)               │
-│  • Job Market Scraper (Tavily)  • GitHub Context Extractor      │
-└─────────────────────────────────────────────────────────────────┘
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![LangGraph](https://img.shields.io/badge/LangGraph-multi--agent-FF6B6B)](https://langchain-ai.github.io/langgraph/)
+[![Gemini](https://img.shields.io/badge/Google-Gemini_2.0-4285F4?logo=google&logoColor=white)](https://ai.google.dev)
+[![Supabase](https://img.shields.io/badge/Supabase-pgvector-3ECF8E?logo=supabase&logoColor=white)](https://supabase.com)
+[![Streamlit](https://img.shields.io/badge/Streamlit-UI-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io)
+
+---
+
+## The Problem
+
+Traditional ATS (Applicant Tracking Systems) use **keyword matching** — rigid, easy to game, and terrible at identifying conceptual fit. A Python developer who listed "Django" but not "web frameworks" gets rejected. A career changer with deeply transferable skills never makes it through the filter.
+
+## The Solution
+
+HireRight replaces keyword counting with **semantic understanding** (Gemini embeddings) and **multi-perspective deliberation** (a LangGraph agent committee). Every resume-job pair goes through a structured debate between three AI agents before a verdict is issued — the same way a real hiring committee works.
+
+---
+
+## Architecture at a Glance
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         HIRERIGHT AI                                │
+│                                                                     │
+│   ┌──────────────┐   REST/JSON   ┌──────────────────────────────┐  │
+│   │  Streamlit   │ ◄──────────── │       FastAPI Backend        │  │
+│   │  Frontend    │               │  ┌────────────────────────┐  │  │
+│   │  :8501       │               │  │   LangGraph Pipeline   │  │  │
+│   └──────────────┘               │  │  Recruiter → Coach     │  │  │
+│                                  │  │       → Judge          │  │  │
+│                                  │  └──────────┬─────────────┘  │  │
+│                                  │             │                 │  │
+│                                  │  ┌──────────▼─────────────┐  │  │
+│                                  │  │  Supabase + pgvector   │  │  │
+│                                  │  │  (768-dim embeddings)  │  │  │
+│                                  │  └────────────────────────┘  │  │
+│                                  └──────────────────────────────┘  │
+│                                           │            │            │
+│              ┌────────────────────────────▼──┐  ┌──────▼─────────┐ │
+│              │   Job Market MCP  :8002        │  │  GitHub MCP    │ │
+│              │   (Tavily live scraping)       │  │  :8001         │ │
+│              └────────────────────────────────┘  └────────────────┘ │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-## Database Schema
+> **Full design rationale, data flows, and architectural decisions** → [ENGINEERING.md](docs/ENGINEERING.md)
 
-### Table Summary
+---
 
-| Table | Component | Description |
-|-------|---------|-------------|
-| `jobs` | Core Data | Job listings, metadata, and 768-dimensional vector embeddings |
+## Feature Overview
 
-### Key Design Decisions
+| Feature | Description |
+|---|---|
+| **Semantic Job Matching** | Gemini embeddings (768-dim) + pgvector cosine similarity — no keyword lists |
+| **Multi-Agent Debate** | Recruiter (skeptic) vs. Coach (advocate) → Judge issues final verdict |
+| **Re-debate Cycle** | If Recruiter and Coach scores diverge >30%, agents debate a second round |
+| **DB-First Caching** | Supabase queried before any live scraping — near-instant on repeat queries |
+| **Live Job Scraping** | Tavily-powered Job Market MCP fetches real listings on demand |
+| **GitHub Enrichment** | GitHub Context MCP extracts languages and projects from public repos |
+| **Cover Letter Gen** | Gemini-written letters informed by debate insights (strengths + gap addressing) |
+| **Skill Gap Roadmap** | Ranked skills to learn, derived from matched job descriptions |
+| **Analytics Dashboard** | Plotly charts — skill demand, salary ranges, remote distribution |
 
-1. **Semantic Search with `pgvector`**: Rely on cutting-edge cosine similarity querying (`<=>`) inside a customized Supabase RPC function instead of slow, rigid `LIKE` string comparisons.
-2. **Dynamic AI Extraction**: The scraping pipeline intelligently extracts and parses semi-structured data points (like remote types, salary limits, and experience levels) using regex over raw HTML content parsed from the MCP server.
-3. **Stateless Frontend**: The Streamlit application handles zero local storage, retrieving all analytics, skill data, and real-time semantic job matches dynamically via FastAPI network requests.
+---
 
-## Quick Start
+## Quick Start (One Command)
+
+```bash
+git clone https://github.com/ayushvarma7/HireRight-AI.git
+cd HireRight-AI
+cp .env.example .env          # fill in your API keys (see Prerequisites)
+python3.11 -m venv venv
+venv/bin/pip install -e ".[frontend]"
+./run_hireright.sh            # starts all 4 services
+```
+
+Then open **http://localhost:8501** in your browser.
+
+```bash
+./run_hireright.sh stop       # stop everything
+./run_hireright.sh status     # check what's running
+./run_hireright.sh logs       # tail all 4 log streams live
+./run_hireright.sh restart    # full restart
+```
+
+---
+
+## Full Setup Guide
 
 ### Prerequisites
 
-- Python 3.11+
-- API Keys: `GOOGLE_API_KEY`, `TAVILY_API_KEY`, `GITHUB_TOKEN`
-- Supabase Project URL and Service Key
+| Requirement | Notes |
+|---|---|
+| Python **3.11+** | Check with `python3 --version` |
+| **Google AI Studio** key | [aistudio.google.com](https://aistudio.google.com) — free tier is sufficient |
+| **Supabase** project | Free tier at [supabase.com](https://supabase.com) — pgvector must be enabled |
+| **Tavily** API key | [tavily.com](https://tavily.com) — required for live job scraping |
+| **GitHub** personal access token | Optional — needed for GitHub profile enrichment |
 
-### Installation
+### Step 1 — Clone & Install
 
 ```bash
-# Clone the repository
 git clone https://github.com/ayushvarma7/HireRight-AI.git
 cd HireRight-AI
 
-# Setup Virtual Environment
-python3 -m venv venv
-source venv/bin/activate
+# Create virtual environment
+python3.11 -m venv venv
 
-# Install dependencies
-pip install -r backend/requirements.txt
+# Install all dependencies (backend + frontend)
+venv/bin/pip install -e ".[frontend]"
 ```
 
-### Database Setup
-
-1. Configure your `.env` connection variables at the root of the project.
-2. Create schema in Supabase by running `supabase_schema.sql` via the SQL Editor.
-3. Seed the job data using the web scraping script:
+### Step 2 — Configure Environment
 
 ```bash
-cd backend
-../venv/bin/python ../scripts/scrape_live_jobs.py --limit 10
+cp .env.example .env
 ```
 
-### Starting the Application
+Open `.env` and set:
 
-You must run the services concurrently in separate terminals:
+```env
+GOOGLE_API_KEY=<your Google AI Studio key>
+SUPABASE_URL=<your Supabase project URL>
+SUPABASE_KEY=<your Supabase service role key>
+TAVILY_API_KEY=<your Tavily key>
+GITHUB_TOKEN=<optional>
+```
+
+### Step 3 — Initialise the Database
+
+1. Go to your **Supabase Dashboard → SQL Editor**
+2. Paste and run the contents of **[`supabase_schema_v2.sql`](supabase_schema_v2.sql)**
+
+This creates:
+- `jobs` table with 768-dim vector index
+- `user_profiles` table (resume + embedding)
+- `match_results` table (debate cache)
+- `job_applications` tracking table
+- `match_jobs` and `match_candidates` RPC functions
+
+### Step 4 — Seed Initial Job Data (Optional but Recommended)
+
+The matching engine needs jobs in the database. Start the services first, then run:
 
 ```bash
-# Terminal 1: Job Market MCP Server (Tavily Scraper)
-cd mcp_servers/job-market
-../../venv/bin/python server.py
+# Start services
+./run_hireright.sh
 
-# Terminal 2: GitHub Context MCP Server
-cd mcp_servers/github-context
-../../venv/bin/python server.py
+# In a new terminal — seed with 3 results per query across 10 tech roles
+cd backend && ../venv/bin/python ../scripts/scrape_live_jobs.py --limit 3
 
-# Terminal 3: FastAPI Backend
-cd backend
-../venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --env-file ../.env
-
-# Terminal 4: Streamlit Frontend HTML/CSS Engine
-./venv/bin/streamlit run frontend/app.py --server.port 8501
+# Or target specific roles
+../venv/bin/python ../scripts/scrape_live_jobs.py \
+  --queries "Python Developer,ML Engineer,Data Scientist" \
+  --limit 5
 ```
 
-## Project Structure
+Alternatively, tick **"🔄 Refresh Live Source"** in the Job Match UI before clicking Start Matching — this triggers live scraping automatically.
 
-```text
+### Step 5 — Run
+
+```bash
+./run_hireright.sh
+```
+
+| Service | URL | Purpose |
+|---|---|---|
+| Streamlit Frontend | http://localhost:8501 | Main UI |
+| FastAPI Backend | http://localhost:8000 | REST API |
+| API Documentation | http://localhost:8000/docs | Swagger UI |
+| GitHub MCP | http://localhost:8001/health | GitHub context server |
+| Job Market MCP | http://localhost:8002/health | Live job scraping |
+
+### Manual Start (Alternative)
+
+If you prefer separate terminals:
+
+```bash
+# Terminal 1 — GitHub Context MCP
+venv/bin/python mcp_servers/github-context/server.py
+
+# Terminal 2 — Job Market MCP
+venv/bin/python mcp_servers/job-market/server.py
+
+# Terminal 3 — FastAPI Backend
+cd backend
+../venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+# Terminal 4 — Streamlit Frontend
+venv/bin/streamlit run frontend/app.py --server.port 8501
+```
+
+---
+
+## Repository Structure
+
+```
 HireRight-AI/
 │
-├── README.md                 # This file
-├── pyproject.toml            # Python dependencies package
-├── supabase_schema.sql       # Database schema creation scripts
+├── run_hireright.sh              # One-click launcher (start/stop/logs/status)
+├── pyproject.toml                # Project dependencies + build config
+├── .env.example                  # Environment variable template
+├── supabase_schema_v2.sql        # Complete DB schema (apply this in Supabase)
+├── supabase_schema.sql           # Legacy schema v1 (reference only)
 │
-├── backend/                  # Core FastAPI & Agent Services
-│   ├── app/
-│   │   ├── agents/           # LangGraph nodes (Judge, Coach, Recruiter)
-│   │   ├── api/              # RESTful endpoints (/match, /jobs)
-│   │   └── services/         # Embedding & Supabase vectors
-│   └── scripts/              # Job Web Scraper Pipeline 
+├── docs/
+│   └── ENGINEERING.md            # Architecture & engineering design document
 │
-├── frontend/                 # Streamlit UI & Visualizations
-│   ├── .streamlit/           # Custom App Theme Configuration
-│   ├── utils/                # API communication clients
-│   └── app.py                # Main Application Entrypoint
+├── backend/
+│   └── app/
+│       ├── main.py               # FastAPI app entrypoint
+│       ├── core/
+│       │   └── config.py         # Pydantic settings (reads .env)
+│       ├── agents/
+│       │   ├── graph.py          # LangGraph pipeline definition
+│       │   ├── state.py          # AgentState TypedDict
+│       │   ├── nodes/
+│       │   │   ├── recruiter.py  # Devil's Advocate agent
+│       │   │   ├── coach.py      # Candidate Advocate agent
+│       │   │   ├── judge.py      # Final Arbiter agent
+│       │   │   └── cover_writer.py
+│       │   └── prompts/          # All LLM prompts (externalised)
+│       ├── api/routes/
+│       │   ├── match.py          # POST /match — main matching pipeline
+│       │   ├── debate.py         # POST /debate/run-debate
+│       │   ├── cover_letter.py   # POST /cover-letter/quick
+│       │   ├── jobs.py           # GET /jobs
+│       │   ├── profile.py        # Resume profile routes
+│       │   ├── analytics.py      # Analytics data routes
+│       │   └── health.py         # Health check
+│       ├── services/
+│       │   ├── embedding.py      # Gemini embedding service (768-dim)
+│       │   ├── supabase_vector_service.py  # pgvector search + upsert
+│       │   └── resume_parser.py  # PDF → structured ResumeData
+│       └── models.py             # Pydantic domain models
 │
-└── mcp_servers/              # Extensible MCP protocol wrappers
-    ├── github-context/       # Live GitHub repository analysis
-    └── job-market/           # Tavily web-scraping intelligence
+├── frontend/
+│   └── app.py                    # Streamlit single-file application (~1600 LOC)
+│
+├── mcp_servers/
+│   ├── github-context/
+│   │   └── server.py             # FastAPI MCP — GitHub repo analysis (:8001)
+│   └── job-market/
+│       └── server.py             # FastAPI MCP — Tavily job scraping (:8002)
+│
+├── scripts/
+│   └── scrape_live_jobs.py       # CLI: Tavily → parse → embed → Supabase
+│
+└── logs/                         # Runtime logs (gitignored)
+    ├── backend.log
+    ├── frontend.log
+    ├── mcp_github.log
+    └── mcp_jobmarket.log
 ```
 
-## Sample Analytics
+---
 
-### Application Metrics
-- **Automated Skill Detection**: Dynamically scores matching rates on priority tech skills.
-- **Match Score Generation**: Calculates real-time 0-100% semantic matching on submitted resumes against live market requisitions. 
+## API Reference
 
-### Key Fields Stored per Job
-| Metric | Description |
-|--------|-------|
-| Agent Match Score | Final unified verdict percentage out of 100% via Agent Debate |
-| Salary Limit | Maximum extracted salary data via raw web source |
-| Commute Policy | Hybrid, Remote, or On-site classification |
-| Experience Bounds | Target seniority inferred from job descriptions |
+All endpoints are under `http://localhost:8000/api/v1/`. Interactive docs at `/docs`.
 
-## Technical Highlights
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/match` | Upload resume + query → returns ranked job matches |
+| `POST` | `/debate/run-debate` | Run full LangGraph agent debate for a job-resume pair |
+| `POST` | `/cover-letter/quick` | Generate a Gemini-powered cover letter from raw text |
+| `POST` | `/cover-letter` | Generate cover letter from structured ResumeData + JobListing |
+| `GET` | `/jobs` | Fetch active job listings from Supabase |
+| `GET` | `/status/{task_id}` | Poll async task status |
+| `GET` | `/health` | System health check |
 
+### `POST /match` — Key Parameters
 
-### Stored Procedures / RPC
+| Parameter | Type | Description |
+|---|---|---|
+| `query` | `string` (form) | Target role, e.g. "Senior Python Developer" |
+| `location` | `string` (form) | Location preference |
+| `level` | `string` (form) | Seniority: Entry / Mid / Senior / Lead |
+| `resume` | `file` (form) | PDF resume (required for full semantic match) |
+| `github_username` | `string` (form) | Optional — enriches context with repo data |
+| `refresh` | `"1"/"0"` (form) | Force live scraping even if DB cache is warm |
 
-```sql
--- match_jobs: Vector similarity match query 
-create or replace function match_jobs (
-  query_embedding vector(768),
-  match_threshold float,
-  match_count int
-)
-returns table (
-  id uuid,
-  title text,
-  company text,
-  location text,
-  description text,
-  source_platform text,
-  remote_type text,
-  job_type text,
-  experience_level text,
-  salary_max int,
-  similarity float
-)
+---
+
+## The Agent Debate Pipeline
+
+```
+Resume PDF + Job Query
+        │
+        ▼
+┌───────────────────┐
+│  1. Profile Parser│  Extract skills, experience, summary from PDF
+└────────┬──────────┘
+         │
+         ▼
+┌───────────────────┐
+│  2. Vector Search │  Cosine similarity search in Supabase (threshold: 0.7)
+│  (DB-first cache) │  → If <3 high-quality hits: trigger live MCP scrape
+└────────┬──────────┘
+         │  top-K job matches
+         ▼
+┌───────────────────┐
+│  3. Recruiter     │  Identifies skill gaps, experience red flags
+│     (gemini-2.0)  │  → recruiter_score, recruiter_arguments[]
+└────────┬──────────┘
+         │
+         ▼
+┌───────────────────┐
+│  4. Coach         │  Highlights strengths, transferable skills
+│     (gemini-2.0)  │  → coach_score, coach_arguments[]
+└────────┬──────────┘
+         │
+         ▼
+┌───────────────────┐
+│  5. Judge         │  Weighs both sides, issues final verdict
+│     (gemini-2.0)  │  → final_score, recommendation, confidence
+└────────┬──────────┘
+         │
+    score_delta > 30%?
+    ┌────┴────┐
+   YES       NO
+    │         │
+    ▼         ▼
+Re-debate  Final Result
+(max 3     (cover letter
+ rounds)    generated)
 ```
 
-### Data Quality Handling
-- **Real-Time Extraction**: Leverages Google Gemini embeddings to compress large multi-page job descriptions into 768 semantic tokens.
+---
 
-## Testing
+## Database Schema (v2)
 
-The web scraper tracks and prevents duplicate insertion by checking URL footprints and managing SQL insertion limits on scraping.
+| Table | Purpose | Key Columns |
+|---|---|---|
+| `jobs` | Job listings + embeddings | `embedding vector(768)`, `url`, `required_skills jsonb` |
+| `user_profiles` | Parsed resume + candidate embedding | `resume_embedding vector(768)`, `skills jsonb`, `work_history jsonb` |
+| `match_results` | Cached debate results | `final_score`, `debate_rounds jsonb`, `cover_letter` |
+| `job_applications` | User application tracker | `status` (saved→offer), `applied_at` |
+| `documents` | Request / context log | `content`, `metadata jsonb` |
 
-## Technologies Used
+RPCs: `match_jobs()` (job search), `match_candidates()` (headhunter reverse search)
 
-- **Database**: Supabase (PostgreSQL with `pgvector`)
-- **Backend API**: Python 3.11, FastAPI
-- **AI Core**: LangGraph, LangChain, Google Gemini
-- **Frontend Dashboard**: Streamlit, Plotly
-- **Data Integrations**: Tavily Search API, GitHub API via Context MCP
+Full schema: [`supabase_schema_v2.sql`](supabase_schema_v2.sql)
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| **LLM** | Google Gemini 2.0 Flash (agents + cover letters) |
+| **Embeddings** | Google Gemini Embedding (768-dim) |
+| **Agent Orchestration** | LangGraph (stateful multi-agent graph) |
+| **Backend API** | FastAPI + Uvicorn |
+| **Vector Database** | Supabase (PostgreSQL + pgvector) |
+| **Frontend** | Streamlit + Plotly |
+| **Live Scraping** | Tavily Search API via Job Market MCP |
+| **GitHub Enrichment** | GitHub REST API via GitHub Context MCP |
+| **Configuration** | Pydantic Settings (`.env` → typed config) |
+
+---
+
+## Development
+
+```bash
+# Install dev dependencies
+venv/bin/pip install -e ".[dev]"
+
+# Run linter
+venv/bin/ruff check backend/ mcp_servers/
+
+# Run tests
+venv/bin/pytest
+
+# Scrape specific roles into DB
+cd backend
+../venv/bin/python ../scripts/scrape_live_jobs.py \
+  --queries "ML Engineer,Data Scientist" \
+  --limit 5
+```
+
+### Engineering Standards
+
+- All LLM/DB calls are `async/await`
+- Prompts are externalised to `backend/app/agents/prompts/` — never hardcoded in nodes
+- Vector search minimum threshold: **0.7** cosine similarity
+- Embedding dimension: **768** (locked to Gemini — do not change)
+- `Judge` node uses structured JSON output; all other nodes parse LLM text with fallbacks
+
+---
+
+## Engineering Design Document
+
+For a deep dive into system design decisions, data flow diagrams, agent state machine, API contracts, database design rationale, performance considerations, and the roadmap:
+
+**→ [docs/ENGINEERING.md](docs/ENGINEERING.md)**
+
+---
 
 ## Author
 
