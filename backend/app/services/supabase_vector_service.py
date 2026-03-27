@@ -83,7 +83,7 @@ class SupabaseVectorService:
         # Call match_jobs RPC
         rpc_params = {
             "query_embedding": query_embedding,
-            "match_threshold": 0.7,
+            "match_threshold": 0.55,  # snippet-based embeddings peak at ~0.65; 0.55 filters noise while returning real matches
             "match_count": top_k,
         }
         

@@ -357,35 +357,40 @@ def show_dashboard():
     st.markdown("### 🌟 Latest Market Additions")
     
     if jobs:
-        for job in jobs[:5]:  # Show top 5
-            salary_badge = f"""<span style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.75rem; font-weight: 500; margin-right: 0.5rem;">💵 Up to ${job.get('salary_max'):,}</span>""" if job.get('salary_max') else ""
-            remote_badge = f"""<span style="background: rgba(16, 185, 129, 0.1); color: #10b981; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.75rem; font-weight: 500; margin-right: 0.5rem;">🌍 {job.get('remote_type', '').title()}</span>""" if job.get('remote_type') else ""
-            level = job.get('experience_level') or "Mid"
-            level_badge = f"""<span style="background: rgba(245, 158, 11, 0.1); color: #f59e0b; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.75rem; font-weight: 500; margin-right: 0.5rem;">📈 {level.title()} Level</span>"""
-            
-            st.markdown(f"""
-            <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 12px; padding: 1.2rem; margin-bottom: 1rem;">
-                <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                    <div>
-                        <h4 style="margin: 0 0 0.3rem 0; color: #f8fafc; font-size: 1.1rem;">{job['title']}</h4>
-                        <p style="margin: 0 0 0.8rem 0; color: #94a3b8; font-weight: 500; font-size: 0.9rem;">🏢 {job['company']}</p>
-                        <div style="display: flex; align-items: center; flex-wrap: wrap; margin-top: 0.5rem;">
-                            {salary_badge}
-                            {remote_badge}
-                            {level_badge}
-                            <span style="background: rgba(255, 255, 255, 0.05); color: #cbd5e1; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.75rem; font-weight: 500;">
-                                📅 {job.get('job_type', 'Full-time').title()}
-                            </span>
-                        </div>
-                    </div>
-                    <span style="background: rgba(14, 165, 233, 0.1); color: #0ea5e9; padding: 0.3rem 0.8rem; border-radius: 20px; font-size: 0.8rem; font-weight: 600; white-space: nowrap;">
-                        Via {job.get('source', 'Unknown')}
-                    </span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+        for job in jobs[:5]:
+            with st.container(border=True):
+                title_col, source_col = st.columns([5, 1])
+                with title_col:
+                    title_text = job.get("title", "Unknown Role")
+                    job_url    = job.get("url") or job.get("source_url", "")
+                    if job_url:
+                        st.markdown(f"**[{title_text}]({job_url})**")
+                    else:
+                        st.markdown(f"**{title_text}**")
+                    st.caption(f"🏢 {job.get('company', 'Unknown Company')}")
+                with source_col:
+                    st.markdown(
+                        f'<div style="text-align:right"><span style="background:rgba(14,165,233,0.1);'
+                        f'color:#0ea5e9;padding:0.25rem 0.6rem;border-radius:20px;font-size:0.75rem;'
+                        f'font-weight:600;">Via {job.get("source_platform", job.get("source","Web"))}</span></div>',
+                        unsafe_allow_html=True,
+                    )
+
+                badge_col1, badge_col2, badge_col3, badge_col4 = st.columns(4)
+                with badge_col1:
+                    remote = job.get("remote_type", "on-site")
+                    st.markdown(f'<span style="background:rgba(16,185,129,0.1);color:#10b981;padding:0.2rem 0.5rem;border-radius:4px;font-size:0.75rem;">🌍 {remote.title()}</span>', unsafe_allow_html=True)
+                with badge_col2:
+                    level = (job.get("experience_level") or "mid").title()
+                    st.markdown(f'<span style="background:rgba(245,158,11,0.1);color:#f59e0b;padding:0.2rem 0.5rem;border-radius:4px;font-size:0.75rem;">📈 {level}</span>', unsafe_allow_html=True)
+                with badge_col3:
+                    job_type = (job.get("job_type") or "Full-Time").title()
+                    st.markdown(f'<span style="background:rgba(255,255,255,0.05);color:#cbd5e1;padding:0.2rem 0.5rem;border-radius:4px;font-size:0.75rem;">📅 {job_type}</span>', unsafe_allow_html=True)
+                with badge_col4:
+                    if job.get("salary_max"):
+                        st.markdown(f'<span style="background:rgba(139,92,246,0.1);color:#8b5cf6;padding:0.2rem 0.5rem;border-radius:4px;font-size:0.75rem;">💵 Up to ${job["salary_max"]:,}</span>', unsafe_allow_html=True)
     else:
-        st.info("No jobs found in the database. Run the backend scraping script to populate the market pipeline.")
+        st.info("No jobs found in the database. Run `venv/bin/python scripts/seed_jobs.py` to populate.")
 
 
 def show_job_match():

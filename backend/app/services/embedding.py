@@ -16,10 +16,13 @@ def get_embeddings_client():
     """Get the Google Generative AI embeddings client."""
     if not settings.google_api_key:
         raise ValueError("GOOGLE_API_KEY not configured")
-    
+
+    # output_dimensionality uses Matryoshka Representation Learning (MRL) to produce
+    # a native 768-dim vector — similarity-preserving, unlike raw truncation.
     return GoogleGenerativeAIEmbeddings(
         model=settings.gemini_embedding_model,
         google_api_key=settings.google_api_key,
+        output_dimensionality=settings.embedding_dimension,
     )
 
 
@@ -35,11 +38,6 @@ async def get_embedding(text: str) -> List[float]:
     print(f"DEBUG: Generating embedding for text (length: {len(text)})...")
     client = get_embeddings_client()
     embedding = await client.aembed_query(text)
-    
-    # Handle dimensionality mismatch (Truncate if using 3072 model but DB expects 768)
-    if len(embedding) == 3072 and settings.embedding_dimension == 768:
-        print(f"DEBUG: Truncating 3072-dim to 768-dim (as requested by settings)")
-        embedding = embedding[:768]
     
     print(f"DEBUG: Final embedding size: {len(embedding)}")
     return embedding
