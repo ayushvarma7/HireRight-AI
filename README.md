@@ -9,6 +9,8 @@
 [![Supabase](https://img.shields.io/badge/Supabase-pgvector-3ECF8E?logo=supabase&logoColor=white)](https://supabase.com)
 [![Streamlit](https://img.shields.io/badge/Streamlit-UI-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io)
 
+> **Deep dive into system design, data flows, agent state machine, and architecture decisions → [docs/ENGINEERING.md](docs/ENGINEERING.md)**
+
 ---
 
 ## The Problem
@@ -48,18 +50,17 @@ HireRight replaces keyword counting with **semantic understanding** (Gemini embe
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-> **Full design rationale, data flows, and architectural decisions** → [ENGINEERING.md](docs/ENGINEERING.md)
-
 ---
 
 ## Feature Overview
 
 | Feature | Description |
 |---|---|
-| **Semantic Job Matching** | Gemini embeddings (768-dim) + pgvector cosine similarity — no keyword lists |
+| **Semantic Job Matching** | Gemini embeddings (768-dim, MRL) + pgvector cosine similarity — no keyword lists |
 | **Multi-Agent Debate** | Recruiter (skeptic) vs. Coach (advocate) → Judge issues final verdict |
 | **Re-debate Cycle** | If Recruiter and Coach scores diverge >30%, agents debate a second round |
 | **DB-First Caching** | Supabase queried before any live scraping — near-instant on repeat queries |
+| **24h Scrape Cooldown** | Tavily is only called when the DB is stale (>24h) or user forces a refresh |
 | **Live Job Scraping** | Tavily-powered Job Market MCP fetches real listings on demand |
 | **GitHub Enrichment** | GitHub Context MCP extracts languages and projects from public repos |
 | **Cover Letter Gen** | Gemini-written letters informed by debate insights (strengths + gap addressing) |
@@ -68,14 +69,15 @@ HireRight replaces keyword counting with **semantic understanding** (Gemini embe
 
 ---
 
-## Quick Start (One Command)
+## Quick Start
 
 ```bash
 git clone https://github.com/ayushvarma7/HireRight-AI.git
 cd HireRight-AI
 cp .env.example .env          # fill in your API keys (see Prerequisites)
 python3.11 -m venv venv
-venv/bin/pip install -e ".[frontend]"
+venv/bin/pip install -r backend/requirements.txt
+venv/bin/pip install -r frontend/requirements.txt
 ./run_hireright.sh            # starts all 4 services
 ```
 
@@ -108,11 +110,11 @@ Then open **http://localhost:8501** in your browser.
 git clone https://github.com/ayushvarma7/HireRight-AI.git
 cd HireRight-AI
 
-# Create virtual environment
 python3.11 -m venv venv
-
-# Install all dependencies (backend + frontend)
-venv/bin/pip install -e ".[frontend]"
+venv/bin/pip install -r backend/requirements.txt
+venv/bin/pip install -r frontend/requirements.txt
+venv/bin/pip install -r mcp_servers/github-context/requirements.txt
+venv/bin/pip install -r mcp_servers/job-market/requirements.txt
 ```
 
 ### Step 2 — Configure Environment
@@ -134,33 +136,29 @@ GITHUB_TOKEN=<optional>
 ### Step 3 — Initialise the Database
 
 1. Go to your **Supabase Dashboard → SQL Editor**
-2. Paste and run the contents of **[`supabase_schema_v2.sql`](supabase_schema_v2.sql)**
+2. Paste and run the contents of **[`migrations/000_initial_schema.sql`](migrations/000_initial_schema.sql)**
 
 This creates:
 - `jobs` table with 768-dim vector index
-- `user_profiles` table (resume + embedding)
+- `user_profiles` table (resume + embedding, auto-persisted on upload)
 - `match_results` table (debate cache)
 - `job_applications` tracking table
+- `documents` request log table
 - `match_jobs` and `match_candidates` RPC functions
 
-### Step 4 — Seed Initial Job Data (Optional but Recommended)
+### Step 4 — Seed Initial Job Data (Recommended)
 
-The matching engine needs jobs in the database. Start the services first, then run:
+The matching engine needs jobs in the database. Run the seed script to populate it with real listings from company career pages:
 
 ```bash
-# Start services
-./run_hireright.sh
+# One-time bulk seed (~50+ jobs across major tech companies)
+venv/bin/python scripts/seed_jobs.py
 
-# In a new terminal — seed with 3 results per query across 10 tech roles
-cd backend && ../venv/bin/python ../scripts/scrape_live_jobs.py --limit 3
-
-# Or target specific roles
-../venv/bin/python ../scripts/scrape_live_jobs.py \
-  --queries "Python Developer,ML Engineer,Data Scientist" \
-  --limit 5
+# Or wipe and re-seed from scratch
+venv/bin/python scripts/seed_jobs.py --clear
 ```
 
-Alternatively, tick **"🔄 Refresh Live Source"** in the Job Match UI before clicking Start Matching — this triggers live scraping automatically.
+Alternatively, tick **"🔄 Refresh Live Source"** in the Job Match UI — this triggers a live scrape automatically for your specific query.
 
 ### Step 5 — Run
 
@@ -177,8 +175,6 @@ Alternatively, tick **"🔄 Refresh Live Source"** in the Job Match UI before cl
 | Job Market MCP | http://localhost:8002/health | Live job scraping |
 
 ### Manual Start (Alternative)
-
-If you prefer separate terminals:
 
 ```bash
 # Terminal 1 — GitHub Context MCP
@@ -203,10 +199,12 @@ venv/bin/streamlit run frontend/app.py --server.port 8501
 HireRight-AI/
 │
 ├── run_hireright.sh              # One-click launcher (start/stop/logs/status)
-├── pyproject.toml                # Project dependencies + build config
 ├── .env.example                  # Environment variable template
-├── supabase_schema_v2.sql        # Complete DB schema (apply this in Supabase)
-├── supabase_schema.sql           # Legacy schema v1 (reference only)
+│
+├── migrations/
+│   ├── 000_initial_schema.sql    # Full DB schema — apply this in Supabase first
+│   ├── 001_minimum_fixes.sql     # Additive patch (url col, documents, user_profiles)
+│   └── 002_fix_ivfflat_small_db.sql  # IVFFlat index tuning for small datasets
 │
 ├── docs/
 │   └── ENGINEERING.md            # Architecture & engineering design document
@@ -223,7 +221,9 @@ HireRight-AI/
 │       │   │   ├── recruiter.py  # Devil's Advocate agent
 │       │   │   ├── coach.py      # Candidate Advocate agent
 │       │   │   ├── judge.py      # Final Arbiter agent
-│       │   │   └── cover_writer.py
+│       │   │   ├── cover_writer.py
+│       │   │   ├── skill_gap.py
+│       │   │   └── improvement.py
 │       │   └── prompts/          # All LLM prompts (externalised)
 │       ├── api/routes/
 │       │   ├── match.py          # POST /match — main matching pipeline
@@ -233,14 +233,15 @@ HireRight-AI/
 │       │   ├── profile.py        # Resume profile routes
 │       │   ├── analytics.py      # Analytics data routes
 │       │   └── health.py         # Health check
-│       ├── services/
-│       │   ├── embedding.py      # Gemini embedding service (768-dim)
-│       │   ├── supabase_vector_service.py  # pgvector search + upsert
-│       │   └── resume_parser.py  # PDF → structured ResumeData
-│       └── models.py             # Pydantic domain models
+│       └── services/
+│           ├── embedding.py      # Gemini embedding service (768-dim MRL)
+│           ├── supabase_vector_service.py  # pgvector search + upsert
+│           └── resume_parser.py  # PDF → structured ResumeData
 │
 ├── frontend/
-│   └── app.py                    # Streamlit single-file application (~1600 LOC)
+│   ├── app.py                    # Streamlit single-file application
+│   └── utils/
+│       └── api_client.py         # Backend API client helpers
 │
 ├── mcp_servers/
 │   ├── github-context/
@@ -249,9 +250,9 @@ HireRight-AI/
 │       └── server.py             # FastAPI MCP — Tavily job scraping (:8002)
 │
 ├── scripts/
-│   └── scrape_live_jobs.py       # CLI: Tavily → parse → embed → Supabase
+│   └── seed_jobs.py              # One-time bulk seeder: 48 queries → Supabase
 │
-└── logs/                         # Runtime logs (gitignored)
+└── logs/                         # Runtime logs
     ├── backend.log
     ├── frontend.log
     ├── mcp_github.log
@@ -268,10 +269,9 @@ All endpoints are under `http://localhost:8000/api/v1/`. Interactive docs at `/d
 |---|---|---|
 | `POST` | `/match` | Upload resume + query → returns ranked job matches |
 | `POST` | `/debate/run-debate` | Run full LangGraph agent debate for a job-resume pair |
-| `POST` | `/cover-letter/quick` | Generate a Gemini-powered cover letter from raw text |
+| `POST` | `/cover-letter/quick` | Generate a Gemini cover letter from raw text |
 | `POST` | `/cover-letter` | Generate cover letter from structured ResumeData + JobListing |
 | `GET` | `/jobs` | Fetch active job listings from Supabase |
-| `GET` | `/status/{task_id}` | Poll async task status |
 | `GET` | `/health` | System health check |
 
 ### `POST /match` — Key Parameters
@@ -283,7 +283,7 @@ All endpoints are under `http://localhost:8000/api/v1/`. Interactive docs at `/d
 | `level` | `string` (form) | Seniority: Entry / Mid / Senior / Lead |
 | `resume` | `file` (form) | PDF resume (required for full semantic match) |
 | `github_username` | `string` (form) | Optional — enriches context with repo data |
-| `refresh` | `"1"/"0"` (form) | Force live scraping even if DB cache is warm |
+| `refresh` | `"1"/"0"` (form) | Force live Tavily scraping even if DB cache is warm |
 
 ---
 
@@ -295,12 +295,13 @@ Resume PDF + Job Query
         ▼
 ┌───────────────────┐
 │  1. Profile Parser│  Extract skills, experience, summary from PDF
+│                   │  → persists user_profiles row to Supabase
 └────────┬──────────┘
          │
          ▼
 ┌───────────────────┐
-│  2. Vector Search │  Cosine similarity search in Supabase (threshold: 0.7)
-│  (DB-first cache) │  → If <3 high-quality hits: trigger live MCP scrape
+│  2. Vector Search │  Cosine similarity in Supabase (threshold: 0.55)
+│  (DB-first cache) │  → DB stale (>24h) or refresh=1: call Job Market MCP
 └────────┬──────────┘
          │  top-K job matches
          ▼
@@ -333,19 +334,19 @@ Re-debate  Final Result
 
 ---
 
-## Database Schema (v2)
+## Database Schema
 
 | Table | Purpose | Key Columns |
 |---|---|---|
 | `jobs` | Job listings + embeddings | `embedding vector(768)`, `url`, `required_skills jsonb` |
-| `user_profiles` | Parsed resume + candidate embedding | `resume_embedding vector(768)`, `skills jsonb`, `work_history jsonb` |
+| `user_profiles` | Parsed resume + candidate embedding | `resume_embedding vector(768)`, `skills jsonb`, `session_id` |
 | `match_results` | Cached debate results | `final_score`, `debate_rounds jsonb`, `cover_letter` |
 | `job_applications` | User application tracker | `status` (saved→offer), `applied_at` |
 | `documents` | Request / context log | `content`, `metadata jsonb` |
 
 RPCs: `match_jobs()` (job search), `match_candidates()` (headhunter reverse search)
 
-Full schema: [`supabase_schema_v2.sql`](supabase_schema_v2.sql)
+Full schema: [`migrations/000_initial_schema.sql`](migrations/000_initial_schema.sql)
 
 ---
 
@@ -354,51 +355,24 @@ Full schema: [`supabase_schema_v2.sql`](supabase_schema_v2.sql)
 | Layer | Technology |
 |---|---|
 | **LLM** | Google Gemini 2.0 Flash (agents + cover letters) |
-| **Embeddings** | Google Gemini Embedding (768-dim) |
+| **Embeddings** | Google Gemini Embedding — 768-dim via MRL (`output_dimensionality=768`) |
 | **Agent Orchestration** | LangGraph (stateful multi-agent graph) |
 | **Backend API** | FastAPI + Uvicorn |
-| **Vector Database** | Supabase (PostgreSQL + pgvector) |
+| **Vector Database** | Supabase (PostgreSQL + pgvector + IVFFlat index) |
 | **Frontend** | Streamlit + Plotly |
 | **Live Scraping** | Tavily Search API via Job Market MCP |
 | **GitHub Enrichment** | GitHub REST API via GitHub Context MCP |
-| **Configuration** | Pydantic Settings (`.env` → typed config) |
+| **Configuration** | Pydantic Settings (`.env` → typed config with `@lru_cache`) |
 
 ---
 
-## Development
-
-```bash
-# Install dev dependencies
-venv/bin/pip install -e ".[dev]"
-
-# Run linter
-venv/bin/ruff check backend/ mcp_servers/
-
-# Run tests
-venv/bin/pytest
-
-# Scrape specific roles into DB
-cd backend
-../venv/bin/python ../scripts/scrape_live_jobs.py \
-  --queries "ML Engineer,Data Scientist" \
-  --limit 5
-```
-
-### Engineering Standards
+## Engineering Standards
 
 - All LLM/DB calls are `async/await`
-- Prompts are externalised to `backend/app/agents/prompts/` — never hardcoded in nodes
-- Vector search minimum threshold: **0.7** cosine similarity
-- Embedding dimension: **768** (locked to Gemini — do not change)
-- `Judge` node uses structured JSON output; all other nodes parse LLM text with fallbacks
-
----
-
-## Engineering Design Document
-
-For a deep dive into system design decisions, data flow diagrams, agent state machine, API contracts, database design rationale, performance considerations, and the roadmap:
-
-**→ [docs/ENGINEERING.md](docs/ENGINEERING.md)**
+- Prompts externalised to `backend/app/agents/prompts/` — never hardcoded in nodes
+- Vector search minimum threshold: **0.55** cosine similarity (tuned for snippet-based embeddings)
+- Embedding dimension: **768** — locked to Gemini MRL output, do not change
+- Judge node uses structured JSON output; all other nodes include fallback parsing
 
 ---
 

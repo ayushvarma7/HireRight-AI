@@ -42,9 +42,10 @@ All inter-service communication is HTTP/JSON. No message queue. No shared in-pro
 
 1. **Stateless services** — Any service can be restarted independently without data loss. State lives in Supabase.
 2. **DB-first** — The vector database is always queried before calling external APIs. External calls are a fallback, not the default.
-3. **No direct DB access from UI** — All data retrieval goes through the FastAPI backend, which provides validation, caching, and a consistent API contract.
-4. **Prompts externalised** — LLM prompts are in `backend/app/agents/prompts/`. Node code contains orchestration logic only.
-5. **Structured LLM output** — Every node instructs the LLM to respond in JSON. Nodes include fallback logic for malformed responses.
+3. **24h scrape cooldown** — Tavily is only called when `MAX(scraped_at)` in the jobs table is older than 24 hours, or the user explicitly sets `refresh=1`. This preserves Tavily monthly credits.
+4. **No direct DB access from UI** — All data retrieval goes through the FastAPI backend, which provides validation, caching, and a consistent API contract.
+5. **Prompts externalised** — LLM prompts are in `backend/app/agents/prompts/`. Node code contains orchestration logic only.
+6. **Structured LLM output** — Every node instructs the LLM to respond in JSON. Nodes include fallback logic for malformed responses.
 
 ---
 
@@ -57,7 +58,7 @@ backend/app/
 ├── main.py                   # FastAPI app, router registration, startup events
 ├── core/
 │   └── config.py             # Pydantic BaseSettings — typed env var loading with @lru_cache
-├── models.py                 # Pydantic domain models (ResumeData, JobListing, Verdict, etc.)
+├── models/                   # Pydantic domain models (ResumeData, JobListing, Verdict, etc.)
 ├── agents/
 │   ├── graph.py              # LangGraph StateGraph definition + compiled pipeline
 │   ├── state.py              # AgentState TypedDict — single source of truth for graph state
@@ -72,7 +73,7 @@ backend/app/
 │   └── prompts/              # Prompt templates (never inline in nodes)
 ├── api/routes/               # FastAPI routers, one per domain
 └── services/
-    ├── embedding.py          # get_embedding() — async, with retry via tenacity
+    ├── embedding.py          # get_embedding() — Gemini MRL 768-dim, async with retry
     ├── supabase_vector_service.py  # SupabaseVectorService — upsert + search
     └── resume_parser.py      # PDF → ResumeData using pdfplumber
 ```
@@ -85,6 +86,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env")
     google_api_key: str = ""
     gemini_model: str = "gemini-2.0-flash"
+    embedding_dimension: int = 768
     ...
 
 @lru_cache
@@ -111,6 +113,10 @@ match.py — route handler
     │     pdfplumber extracts text → parse_resume() → ResumeData
     │     skill_names extracted for search context
     │
+    ├── Step 1b: Persist User Profile
+    │     SHA-256 of resume bytes → session_id (dedup key)
+    │     upsert to user_profiles (skills, work_history, resume_embedding)
+    │
     ├── Step 2: GitHub Context (optional)
     │     POST http://localhost:8001/tools/get_user_repos
     │     → extracts languages + topics → appended to search_context
@@ -121,16 +127,15 @@ match.py — route handler
     ├── Step 4: Log Request to Supabase `documents` table
     │
     ├── Step 5: Vector Search — Supabase pgvector
-    │     get_embedding(search_context) → 768-dim vector
-    │     match_jobs(query_embedding, threshold=0.7, count=10)
+    │     get_embedding(search_context) → 768-dim MRL vector
+    │     match_jobs(query_embedding, threshold=0.55, count=10)
     │     → search_results[]
     │
     ├── Step 5b: DB-First Cache Check
-    │     count results where score > 0.8
-    │     if count < 3 OR refresh == "1":
-    │         POST http://localhost:8002/tools/search_jobs
-    │         → _parse_raw_jobs() → embed → insert to Supabase
-    │         → re-run vector search
+    │     if refresh == "1"       → call Tavily (forced refresh)
+    │     elif results not empty  → use cache (skip Tavily)
+    │     elif db_is_fresh (<24h) → use cache (trust freshness)
+    │     else (db stale)         → call Tavily, parse, embed, insert, re-search
     │
     ├── Step 6: Per-Job LLM Analysis
     │     For each result:
@@ -150,7 +155,7 @@ match.py — route handler
       "id": "uuid",
       "title": "Senior Python Developer",
       "company": "Acme Corp",
-      "url": "https://linkedin.com/jobs/...",
+      "url": "https://jobs.acme.com/senior-python-developer",
       "match_score": 0.847,
       "missing_skills": ["Kubernetes", "Terraform"],
       "experience_level": "senior",
@@ -242,18 +247,18 @@ should_redebate = (
 )
 ```
 
-The re-debate loop fires when the Recruiter and Coach are more than 30 percentage points apart. This forces a second round of deliberation with both agents now aware of the previous round's arguments (passed through the state).
+The re-debate loop fires when the Recruiter and Coach are more than 30 percentage points apart. Both agents in the next round receive the full prior round's arguments via state, forcing convergence.
 
 ### Agent Model Assignment
 
 | Node | Model | Rationale |
 |---|---|---|
-| Recruiter | `gemini-2.0-flash` | Fast inference, adversarial role doesn't need deep reasoning |
-| Coach | `gemini-2.0-flash` | Fast inference, creative but not complex reasoning |
+| Recruiter | `gemini-2.0-flash` | Fast inference — adversarial role doesn't need deep reasoning |
+| Coach | `gemini-2.0-flash` | Fast inference — creative but not complex reasoning |
 | Judge | `gemini-2.0-flash` | Structured JSON output, weighing arguments |
 | Cover Writer | `gemini-2.0-flash` | Creative writing — temperature 0.8 |
 
-> **Note**: `gemini-1.5-pro` was originally planned for Judge. Upgrade here if verdict quality degrades for complex profiles.
+> Upgrade Judge to `gemini-1.5-pro` if verdict quality degrades on complex profiles.
 
 ---
 
@@ -262,30 +267,32 @@ The re-debate loop fires when the Recruiter and Coach are more than 30 percentag
 ### Why pgvector over Pinecone / Weaviate
 
 - **Supabase is already the relational store** — co-locating vectors with job metadata eliminates join overhead and keeps the infra footprint small
-- **SQL joins remain available** — match_jobs can be extended with `WHERE company = 'Acme'` or salary filters without a separate metadata filter layer
-- **`CREATE TABLE IF NOT EXISTS`** migrations are idempotent and version-controllable alongside the rest of the code
+- **SQL joins remain available** — `match_jobs` can be extended with `WHERE company = 'Acme'` or salary filters without a separate metadata filter layer
+- **Idempotent DDL migrations** — schema changes are version-controlled alongside the code
 
 ### Embedding Strategy
 
 ```
-Input text = "{title} at {company}. {description[:8000]}"
+Input text = "{query} {level} {location} Skills: {skills} {resume_text[:2000]}"
                        │
                        ▼
-           Gemini Embedding API
-           (models/gemini-embedding-001)
+           GoogleGenerativeAIEmbeddings
+           model="models/gemini-embedding-001"
+           output_dimensionality=768          ← MRL (not naive truncation)
                        │
                        ▼
-              vector(768)  →  stored in jobs.embedding
+              vector(768)  →  stored in jobs.embedding / user_profiles.resume_embedding
 ```
 
-The embedding input is deliberately concise: title + company gives the primary semantic signal, and the truncated description adds context without exceeding the model's optimal input length.
+**Why MRL matters**: The model natively outputs 3072 dimensions. Naive truncation (`[:768]`) destroys cosine similarity alignment — the first 768 dimensions carry different semantic weight than a full 768-dim MRL projection. `output_dimensionality=768` uses Matryoshka Representation Learning to produce a properly aligned 768-dim vector.
 
 ### Similarity Function
 
 ```sql
 -- Cosine distance operator (pgvector)
 1 - (jobs.embedding <=> query_embedding) as similarity
--- Threshold: 0.7 (enforced in RPC and in supabase_vector_service.py)
+-- Search threshold: 0.55 (tuned for snippet-based embeddings that peak at ~0.65)
+-- Cache-warm threshold: 0.65 (bar for considering the DB cache sufficient)
 ```
 
 Cosine similarity is preferred over L2 distance for text embeddings because it measures **directional alignment** (conceptual similarity) rather than magnitude distance.
@@ -293,25 +300,27 @@ Cosine similarity is preferred over L2 distance for text embeddings because it m
 ### Index Configuration
 
 ```sql
--- IVFFlat index — approximate nearest neighbours, ~10ms query at scale
+-- IVFFlat index — approximate nearest neighbours
+-- lists=1 appropriate for <300 rows; scale to sqrt(row_count) as DB grows
+-- set_config('ivfflat.probes', '10') called at query time for small datasets
 CREATE INDEX jobs_embedding_idx
   ON jobs USING ivfflat (embedding vector_cosine_ops)
-  WITH (lists = 100);
+  WITH (lists = 1);
 ```
 
-`lists = 100` is appropriate for < 1M rows. Increase to `sqrt(rows)` as the dataset grows. For production at scale, migrate to HNSW (`pgvector >= 0.5.0`).
+For production at >10k rows, migrate index to HNSW (`pgvector >= 0.5.0`) for better recall and no probe-tuning requirement.
 
-### Schema v2 Tables
+### Schema Tables
 
 ```
 jobs               ← job listings + embeddings (core)
-user_profiles      ← resume data + candidate embeddings
+user_profiles      ← resume data + candidate embeddings (session_id dedup key)
 match_results      ← cached debate results (debate_rounds jsonb, cover_letter)
 job_applications   ← user application tracker (status progression)
 documents          ← request/context audit log
 ```
 
-Full DDL: [`supabase_schema_v2.sql`](../supabase_schema_v2.sql)
+Full DDL: [`migrations/000_initial_schema.sql`](../migrations/000_initial_schema.sql)
 
 ---
 
@@ -357,7 +366,7 @@ POST /tools/search_jobs  { query: str, limit: int }
 GET  /health  → { status: "healthy", tavily_configured: bool }
 ```
 
-The backend's `_parse_raw_jobs()` converts raw Tavily snippets into structured job records. Aggregated listing pages (e.g. "1,000+ Python jobs in NYC") are filtered using regex before any parsing occurs.
+The backend's `_parse_raw_jobs()` converts raw Tavily snippets into structured job records. Aggregated listing pages (e.g. "1,000+ Python jobs in NYC") and invalid company names (locations, tech keyword lists, known aggregator sites) are filtered using `_is_invalid_company()` before any parsing occurs.
 
 ### GitHub Context MCP (`:8001`)
 
@@ -374,37 +383,35 @@ The backend extracts `languages` and `topics` sets from the top 5 repos and appe
 
 ## 8. DB-First Caching Strategy
 
-The match pipeline follows a **cache-first** pattern to avoid unnecessary external API calls:
+The match pipeline follows a strict **cache-first** priority order to avoid unnecessary Tavily API calls (monthly credit limit):
 
 ```
-Query Supabase vector index
-         │
-         ▼
-Count results with similarity > 0.8
-         │
-    ┌────┴──────────────┐
-  >= 3                < 3  OR  refresh == "1"
-    │                  │
-    ▼                  ▼
-Return cached      Call Job Market MCP
-results            → parse → embed → insert
-                   → re-query Supabase
-                   → return updated results
+Priority 1: refresh == "1"
+    → Always call Tavily (user-forced refresh)
+
+Priority 2: DB has results
+    → Return cached results, skip Tavily entirely
+
+Priority 3: DB empty AND scraped_at < 24h ago
+    → Skip Tavily (trust recent scrape, just no matches for this query)
+
+Priority 4: DB empty AND scraped_at > 24h ago (or never scraped)
+    → Call Tavily, parse, embed, insert to Supabase, re-query
 ```
 
-**Why 0.8 for the cache-hit threshold vs. 0.7 for the search threshold?**
+**Cache-warm threshold**: A result is considered a strong cache hit at similarity ≥ 0.65. Below this, even if results exist, a live scrape may be triggered.
 
-- `0.7` is the minimum quality bar for showing a result to the user
-- `0.8` is the bar for considering the cache "warm" — we want high-confidence cached results before skipping live scraping
-- Using `0.8` for the cache check means a sparse DB with mediocre matches will still trigger a fresh scrape
+**Why 0.55 for the search threshold vs. 0.65 for cache-warm?**
 
-This prevents the degenerate case where the DB has 10 low-quality jobs (scoring 0.71–0.79) and the system wrongly concludes the cache is sufficient.
+- `0.55` is the minimum quality bar for showing a result to the user (Tavily snippet-based embeddings peak at ~0.65 even for strong matches — full job description embeddings would merit 0.7)
+- `0.65` is the bar for considering the cache "warm" — high-confidence cached results before skipping live scraping
+- Using a lower search threshold prevents false negatives on sparse DBs
 
 ---
 
 ## 9. Frontend Architecture
 
-The Streamlit frontend is a **single-file application** (`frontend/app.py`, ~1600 LOC). All pages are rendered as Python functions called from `main()` based on sidebar radio selection.
+The Streamlit frontend is a **single-file application** (`frontend/app.py`). All pages are rendered as Python functions called from `main()` based on sidebar radio selection.
 
 ### Session State Usage
 
@@ -419,7 +426,7 @@ The Streamlit frontend is a **single-file application** (`frontend/app.py`, ~160
 
 ### HTML Rendering Policy
 
-Streamlit's `st.markdown(unsafe_allow_html=True)` does not reliably render deeply nested HTML — inner elements can be escaped by the sanitiser. The rule applied throughout the codebase:
+Streamlit's `st.markdown(unsafe_allow_html=True)` does not reliably render deeply nested HTML — inner elements can be escaped by the sanitiser. The rule applied throughout:
 
 - **Structure / containers**: `st.container()`, `st.columns()`, `st.expander()` — never raw HTML divs
 - **Simple colour-coded labels**: `st.markdown("<div ...>single-line content</div>", unsafe_allow_html=True)` — only when no native equivalent exists
@@ -438,11 +445,13 @@ All configuration flows through `backend/app/core/config.py` via Pydantic `BaseS
 Pydantic BaseSettings (config.py)
     │
     ├── settings.google_api_key
-    ├── settings.gemini_model       = "gemini-2.0-flash"
+    ├── settings.gemini_model           = "gemini-2.0-flash"
+    ├── settings.gemini_embedding_model = "models/gemini-embedding-001"
+    ├── settings.embedding_dimension    = 768
     ├── settings.supabase_url
     ├── settings.supabase_key
-    ├── settings.redebate_threshold = 0.30
-    └── settings.max_debate_rounds  = 3
+    ├── settings.redebate_threshold     = 0.30
+    └── settings.max_debate_rounds      = 3
 ```
 
 **Rules:**
@@ -461,15 +470,15 @@ Pydantic BaseSettings (config.py)
 | Resume PDF parse | 0.2–0.5s | pdfplumber, CPU-bound |
 | GitHub fetch (if provided) | 0.5–2s | network-bound, non-blocking |
 | Gemini embedding | 0.3–1s | single API call |
-| Supabase vector search | 0.1–0.5s | IVFFlat index, very fast |
-| Conditional MCP scrape | 5–15s | only when cache cold; 3 jobs × (Tavily + embed + insert) |
-| Per-job LLM skill extraction | 0.5–1s × N jobs | parallelisable (not yet parallelised) |
+| Supabase vector search | 0.1–0.5s | IVFFlat index |
+| Conditional MCP scrape | 5–15s | only when DB is stale (>24h); 3 jobs × (Tavily + embed + insert) |
+| Per-job LLM skill extraction | 0.5–1s × N jobs | sequential (parallelisable) |
 | **Total (cache warm)** | **1–4s** | |
-| **Total (cache cold)** | **15–30s** | first request or refresh=1 |
+| **Total (cache cold / stale)** | **15–30s** | first request or refresh=1 |
 
 ### Bottleneck Analysis
 
-1. **Cold-cache MCP scraping** is the dominant latency. Mitigated by: the DB-first strategy (most repeat queries hit the cache), and the reduced `--limit 3` default.
+1. **Cold-cache MCP scraping** is the dominant latency. Mitigated by the 24h cooldown — most requests hit the DB cache.
 2. **Per-job LLM skill extraction** is called sequentially. Converting to `asyncio.gather()` would cut this by ~60%.
 3. **LangGraph debate** (via `/debate/run-debate`) adds 15–30s — this is a separate user-initiated action, not part of the initial match.
 
@@ -487,7 +496,7 @@ Pydantic BaseSettings (config.py)
 
 - [ ] Replace Supabase `"Public Access"` policies with auth-scoped RLS (e.g. `auth.uid() = user_id`)
 - [ ] Add FastAPI `Depends(verify_token)` middleware to all non-health routes
-- [ ] Store secrets in a secrets manager (AWS Secrets Manager, GCP Secret Manager, or Supabase Vault)
+- [ ] Store secrets in a secrets manager (GCP Secret Manager or Supabase Vault)
 - [ ] Rate-limit `/match` — it triggers external API calls (Tavily, Gemini) that have cost implications
 - [ ] Never log request bodies containing resume text — PII
 - [ ] Add `Content-Security-Policy` headers to the Streamlit deployment
@@ -496,15 +505,14 @@ Pydantic BaseSettings (config.py)
 
 ## 13. Known Limitations
 
-| Issue | Location | Impact | Workaround |
+| Issue | Location | Impact | Workaround / Status |
 |---|---|---|---|
 | `roadmap_agent.py` uses `llm.invoke()` (sync) | `backend/app/agents/roadmap_agent.py` | Can block async event loop | Convert to `async def` + `await llm.ainvoke()` |
-| No persistent user identity | Frontend session state only | Matches lost on page refresh | Implement `user_profiles` write on match completion |
 | Per-job skill extraction is sequential | `match.py` Step 6 | Adds N × ~0.7s to response | Wrap in `asyncio.gather()` |
 | `match_results` table not yet written | `match.py`, `debate.py` | Debate cache not persistent | Implement upsert after debate completes |
-| Dashboard job cards use old HTML pattern | `frontend/app.py:show_dashboard()` | Risk of HTML bleed | Rewrite with `st.columns()` same as Job Match page |
-| Scraper: "LinkedIn" parsed as company name | `scrape_live_jobs.py` | Junk entries in DB | Add LinkedIn/Indeed to invalid company list |
-| IVFFlat requires `>= lists × 3` rows to build | `supabase_schema_v2.sql` | Index errors on empty DB | Use `HNSW` or defer index creation until seeded |
+| IVFFlat requires `>= lists × 3` rows | DB index | Index errors on tiny DB | Migration 002 sets `lists=1`; use HNSW at scale |
+
+> Items previously listed as limitations that are now resolved: persistent user profiles (`_persist_user_profile` implemented), dashboard HTML bleeding (rewritten with `st.container()`/`st.columns()`), invalid company name filtering (`_is_invalid_company()` with aggregator blocklist).
 
 ---
 
@@ -512,25 +520,22 @@ Pydantic BaseSettings (config.py)
 
 ### P0 — Core Reliability
 - [ ] Persist `match_results` after every debate run (enable true DB-first for agent results)
-- [ ] Write `user_profiles` row from parsed resume on each `/match` call
 - [ ] Fix sequential skill extraction → `asyncio.gather()`
 - [ ] Convert `roadmap_agent.py` to async
 
 ### P1 — Search Quality
 - [ ] **Hybrid Search (RRF)** — Combine pgvector cosine similarity with PostgreSQL full-text search using Reciprocal Rank Fusion
 - [ ] Add location filter to `match_jobs` RPC
-- [ ] Improve scraper: reject "LinkedIn"/"Indeed" as company names
+- [ ] Migrate IVFFlat → HNSW index as job count grows past 1k
 
 ### P2 — UX & Features
 - [ ] Application tracker UI — surface `job_applications` table (saved/applied/interview/offer)
 - [ ] Headhunter mode — reverse search: paste a job description, find matching profiles
-- [ ] Dashboard job cards HTML fix (same pattern as Job Match page)
 - [ ] Streamlit multi-page refactor — split `app.py` into `pages/` files
 
 ### P3 — Observability & Production
 - [ ] LangSmith integration — trace multi-round debates with full state visibility
 - [ ] Async `/match` (task-polling) — `POST /match` → `{task_id}`, `GET /status/{task_id}`
-- [ ] Docker Compose production profile — with nginx reverse proxy
 - [ ] Supabase RLS hardening + auth layer
 
 ---
